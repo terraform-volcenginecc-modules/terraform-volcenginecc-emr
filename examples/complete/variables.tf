@@ -48,8 +48,13 @@ variable "tos_bucket_name" {
   }
 }
 variable "bootstrap_script_path" {
-  description = "已上传的实际 Bootstrap 脚本 tos://bucket/key 路径；模块不上传脚本。"
+  description = "可选的节点初始化脚本 tos://bucket/key 地址；省略或设为 null 时不启用 Bootstrap。脚本由调用方上传。"
   type        = string
+  default     = null
+  validation {
+    condition     = var.bootstrap_script_path == null ? true : can(regex("^tos://[^/]+/.+", var.bootstrap_script_path))
+    error_message = "bootstrap_script_path 必须为 tos://bucket/key 地址；不启用时省略或设为 null。"
+  }
 }
 variable "task_node_count" {
   description = "批处理 TASK 节点手动期望容量，不是自动伸缩策略。"

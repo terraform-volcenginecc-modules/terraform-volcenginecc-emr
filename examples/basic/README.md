@@ -1,73 +1,72 @@
-# basic
+# BASIC EMR Example
 
 ## 1. Overview
 
-Spark/Hadoop offline ETL: 1 Master, 2 Core nodes, HDFS/YARN/SPARK3, pay-as-you-go billing, and private nodes. Uses existing network, IAM Role, and SSH key pair.
+This example creates a private Spark/Hadoop cluster with 1 Master and 2 Core nodes and installs HDFS, YARN, and SPARK3. The caller provides a Subnet and security group in the same VPC and zone, an ECS IAM Role, an SSH key pair, and supported EMR release, ECS, and disk specifications. Unlike complete, it creates no TASK group and configures no Hive or TOS data lake.
 
 ## 2. Usage
 
-The intended source is `terraform-volcenginecc-modules/emr/volcenginecc`, pending publication. Run the draft by changing the module source in a local checkout to `../..`; static validation changes only temporary copies. Set all required inputs in an ignored `terraform.tfvars`. Provide credentials using `VOLCENGINE_ACCESS_KEY` / `VOLCENGINE_SECRET_KEY` or a supported profile. Exclude `dev_overrides` to use the official Provider.
+Configure inputs and run these commands from `examples/basic`:
 
 ```shell
-terraform init -backend=false
-terraform validate
+terraform init
 terraform plan
 terraform apply
-terraform plan -detailed-exitcode
+terraform plan
 terraform destroy
 ```
 
-For OpenTofu, substitute `tofu`, using a separate directory and State. These commands create billable resources; OpenTofu cloud execution is unverified.
+Use the first Plan to review the creation scope. The Plan after Apply should show no changes. Before Destroy, confirm that the current State contains only the EMR cluster managed by this example. Existing network, IAM Role, and SSH key-pair resources remain.
 
-## 3. Examples
+## 3. Requirements
 
-This is the basic scenario. `examples/complete` adds TASK workers, Bootstrap, Hive warehouses, and Spark event logs.
-
-## 4. Requirements
-
-| Requirement | Version / condition |
+| Name | Version |
 |---|---|
-| Terraform | `1.5.7` |
-| OpenTofu | `1.11.8` |
-| Existing dependencies | Same-VPC network, matching Subnet/zone/security group, ECS IAM Role, SSH key pair |
-| Cloud prerequisites | Enabled EMR; supported release, components, instance/disk specifications; sufficient quotas |
+| Terraform | `>= 1.5.7, < 2.0.0` |
+| `volcengine/volcenginecc` | `= 0.0.73` |
 
-## 5. Providers
+## 4. Providers
 
-| Name | Source | Version |
-|---|---|---|
-| volcenginecc | `volcengine/volcenginecc` | `= 0.0.73` |
-
-## 6. Resources
-
-| Managed through module | Count |
+| Name | Source |
 |---|---|
-| `volcenginecc_emr_cluster` | 1, including initial Master/Core |
+| `volcenginecc` | `volcengine/volcenginecc` |
 
-Creates no independent TASK groups or external dependencies.
-
-## 7. Inputs
-
-| Name | Type | Default | Required | Description |
-|---|---|---|---|---|
-| region | string | — | yes | Region |
-| cluster_name | string | — | yes | Cluster name |
-| release_version | string | — | yes | Available EMR release |
-| network | object | — | yes | vpc_id, subnet_id, security_group_id, zone_id |
-| ecs_iam_role | string | — | yes | Authorized existing ECS Role |
-| ecs_key_pair_name | string | — | yes | Existing SSH key pair |
-| instance_type | string | — | yes | EMR-supported ECS type |
-| disk_type | string | — | yes | Supported EMR disk type |
-
-## 8. Outputs
+## 5. Resources
 
 | Name | Description |
 |---|---|
-| cluster_id | EMR cluster ID |
-| applications | Installed components and actual versions |
+| `module.emr` | Uses `terraform-volcenginecc-modules/emr/volcenginecc` to create the EMR cluster and initial Master/Core groups. |
+
+This example declares no Resource or Data Source directly.
+
+## 6. Inputs
+
+| Name | Description |
+|---|---|
+| `region` | Deployment region, also used to configure the `volcenginecc` Provider. |
+| `cluster_name` | EMR cluster name. |
+| `release_version` | EMR release available in the target region and supporting HDFS, YARN, and SPARK3. |
+| `network` | Existing `vpc_id`, `subnet_id`, `security_group_id`, and `zone_id`; the Subnet and zone must match. |
+| `ecs_iam_role` | Existing ECS IAM Role with permissions required by EMR. |
+| `ecs_key_pair_name` | Existing ECS SSH key-pair name. |
+| `instance_type` | EMR-supported ECS specification used by both Master and Core nodes in the target zone. |
+| `disk_type` | EMR disk type supported in the target zone. |
+
+## 7. Outputs
+
+| Name | Description |
+|---|---|
+| `cluster_id` | ID of the created EMR cluster. |
+| `applications` | Installed application and actual version information returned by the Provider. |
+
+## 8. Example
+
+This directory contains the basic example for deploying a minimal Spark/Hadoop cluster first. Use complete when HIVE, an independent TASK group, TOS Hive warehouses, or Spark event logs are required.
 
 ## 9. Notes
 
-On 2026-11-04, Terraform 1.5.7 and official Provider 0.0.73 passed creation and core-service startup. After fixing empty `application_extras` read-back differences, the second plan returned No changes (exit 0). Standard destroy succeeded; all 3 ECS nodes and 12 disks were independently confirmed absent. Business jobs and other deployment/security modes remain unverified.
-
-The caller manages security-group rules and outbound connectivity. Keep credentials out of the repository. A second plan must return 0; after destroy, independently query EMR, ECS, and disks for absence. Caller dependencies remain.
+- Supply Provider credentials through environment variables, shared configuration, or the runtime platform's credential manager. Do not store them in source or variable files.
+- Run `terraform plan` again after Apply. Idempotence requires the final Plan to show no changes.
+- The caller manages security-group rules and outbound connectivity.
+- Review the Plan before changing the release, network, or initial node groups to identify cluster replacement.
+- `terraform destroy` removes the module-managed EMR cluster while preserving caller-owned network, IAM Role, and SSH key pair.

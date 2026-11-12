@@ -40,7 +40,7 @@ module "emr" {
       data_disk     = { size = 200, volume_type = var.disk_type, count = 1 }
     }
   }
-  bootstrap_scripts = {
+  bootstrap_scripts = var.bootstrap_script_path == null ? {} : {
     prepare = {
       script_name = "PrepareDataLake"
       script_path = var.bootstrap_script_path
