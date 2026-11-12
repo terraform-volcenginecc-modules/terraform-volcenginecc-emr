@@ -1,138 +1,131 @@
 # terraform-volcenginecc-emr
 
-## 1. Overview
+创建和管理火山引擎 E-MapReduce（EMR）集群。
 
-面向 Spark/Hadoop/Hive 离线 ETL、数据湖计算和批处理的 EMR 模块。管理一个按量付费集群、初始 Master/Core 节点组及可选的独立 TASK 组。可配置发行版本、组件、磁盘、Bootstrap 脚本、应用设置和标签。网络、IAM、SSH 密钥对、TOS 对象及业务作业由调用方管理。
+## 1. 概述（Overview）
 
-状态：**draft，Registry 尚未发布**。2026-11-04，basic 使用 Terraform 1.5.7 和官方 Provider 0.0.73，通过创建、核心服务启动、二次 plan No changes 及标准 destroy；已回查确认 3 个节点和 12 块磁盘全部释放。complete 也通过标准四步生命周期，5 个节点和 16 块磁盘独立回查全部释放。5 节点 Bootstrap、Spark/Hive TOS 查询（10 行、总和 45）、TOS 事件日志和 History Server 读取通过。更新、替换、导入、Kerberos 和高可用尚未验证。
+本模块面向 Spark、Hadoop、Hive 离线 ETL、数据湖计算和批处理场景，创建一个按量付费 EMR 集群及初始 Master/Core 节点组，并可管理独立 TASK 节点组。调用方可配置发行版本、组件、磁盘、Bootstrap、应用参数和标签；VPC、Subnet、安全组、ECS IAM Role、SSH 密钥对、TOS 对象及业务作业由调用方管理。
 
-## 2. Usage
+## 2. 用法（Usage）
 
-在调用方 root 配置 Provider 和凭据。用户提供的 VPC Registry 命名格式为 `source = "terraform-volcenginecc-modules/vpc/volcenginecc"`；本 EMR 模块使用 `terraform-volcenginecc-modules/emr/volcenginecc`，两者是不同模块。下方 EMR 地址是计划发布地址，不声明已有发布版本；发布前运行需使用本地检出源码。
+调用方需要准备同一 VPC 和可用区内的 Subnet、安全组、ECS IAM Role、SSH 密钥对，并确认目标地域支持所选 EMR 发行版本、组件、ECS 规格和磁盘类型。
 
 ```hcl
+provider "volcenginecc" {
+  region = var.region
+}
+
 module "emr" {
   source = "terraform-volcenginecc-modules/emr/volcenginecc"
 
-  cluster_name      = var.cluster_name
-  release_version   = var.release_version
-  network           = var.network
-  ecs_iam_role      = var.ecs_iam_role
-  ecs_key_pair_name = var.ecs_key_pair_name
+  cluster_name      = "data-platform"
+  release_version   = "3.19.0"
+  ecs_iam_role      = "VEECSforEMRRole"
+  ecs_key_pair_name = "emr-keypair"
+
+  network = {
+    vpc_id            = "vpc-xxxxxxxx"
+    subnet_id         = "subnet-xxxxxxxx"
+    security_group_id = "sg-xxxxxxxx"
+    zone_id           = "cn-beijing-a"
+  }
+
   initial_node_groups = {
     master = {
       name          = "MasterGroup"
       type          = "MASTER"
-      instance_type = var.master_instance_type
+      instance_type = "ecs.r1ie.xlarge"
       node_count    = 1
-      system_disk   = { size = 120, volume_type = var.disk_type }
-      data_disk     = { size = 80, volume_type = var.disk_type, count = 1 }
+      system_disk   = { size = 120, volume_type = "ESSD_FlexPL" }
+      data_disk     = { size = 80, volume_type = "ESSD_FlexPL", count = 1 }
     }
     core = {
       name          = "CoreGroup"
       type          = "CORE"
-      instance_type = var.worker_instance_type
+      instance_type = "ecs.r1ie.xlarge"
       node_count    = 2
-      system_disk   = { size = 120, volume_type = var.disk_type }
-      data_disk     = { size = 200, volume_type = var.disk_type, count = 4 }
+      system_disk   = { size = 120, volume_type = "ESSD_FlexPL" }
+      data_disk     = { size = 200, volume_type = "ESSD_FlexPL", count = 4 }
     }
   }
 }
 ```
 
-调用方 root 需声明引用的变量。确认发行版本、组件组合、ECS 规格、磁盘及配额在目标地域可用。
+Provider 凭据通过环境变量、共享配置文件或调用平台的凭据管理能力注入，不要写入 Module 参数。
 
-## 3. Examples
+## 3. 示例（Examples）
 
-| 目录 | 场景 | 覆盖 |
-|---|---|---|
-| `examples/basic` | Spark/Hadoop 离线 ETL | HDFS、YARN、SPARK3；1 个 Master、2 个 Core；私网节点 |
-| `examples/complete` | Spark/Hive 数据湖与批处理 Worker | Master/Core/TASK、实际 Bootstrap 脚本引用、Hive 仓库、Spark 事件日志、标签 |
+- basic：创建 1 个 Master 和 2 个 Core 的私网 Spark/Hadoop 集群，安装 HDFS、YARN 和 SPARK3，依赖已有网络、IAM Role 和 SSH 密钥对。
+- complete：在 basic 基础上增加 HIVE、独立 TASK 组、TOS Hive 仓库、Spark 事件日志和标签。
+    - `prepare-tos.py`：随 complete 提供的可选 TOS 准备工具。在部署电脑或流水线上运行，用于检查已有 Bucket、创建 Spark 事件日志目录，并按需开启 RenameObject。已通过控制台完成这些操作时可以跳过。
+    - `bootstrap.sh`：随 complete 提供的 Bootstrap 示例脚本，不是集群启动的必需脚本。需要演示节点初始化时，用户先把它上传到自己的 TOS，再填写 `bootstrap_script_path`；EMR 会在各节点执行它并创建 `/var/tmp/emr-batch`。没有节点初始化需求时无需上传或配置。
+    - 两个文件各自独立，互不调用。
 
-每个示例包含 `main.tf`、`outputs.tf`、`variables.tf`、`versions.tf`、`README.md` 和 `README.zh-CN.md`。根目录使用相同文件名，并包含 `.gitignore`、`.pre-commit-config.yaml`、`CHANGELOG.md`、`LICENSE` 和 `SECURITY.md`。当前无需复用子模块。
+两个示例都通过 Registry 地址引用模块。进入对应示例目录，填写输入后执行 `terraform init`、`terraform plan` 和 `terraform apply`。
 
-## 4. Requirements
+## 4. 版本要求（Requirements）
 
-| 依赖 | 版本／条件 |
+| 名称 | 版本 |
 |---|---|
-| 引擎约束 | `>= 1.5.7, < 2.0.0` |
-| 已验证 Terraform | `1.5.7` |
-| 已验证 OpenTofu | `1.11.8` |
-| 最低 Provider | `volcengine/volcenginecc >= 0.0.60` |
-| 示例 Provider | 官方 `0.0.73`，两个示例均固定 |
-| 已有依赖 | VPC、Subnet、安全组、ECS IAM Role、SSH 密钥对；complete 还需私有 TOS Bucket 和已上传脚本 |
-| 云端条件 | 已开通 EMR、足够配额、支持的发行版本／组件及节点／磁盘规格 |
+| Terraform / OpenTofu | `>= 1.5.7, < 2.0.0` |
+| `volcengine/volcenginecc` | `>= 0.0.60` |
 
-引擎范围允许两个指定引擎，其他版本未测试。所有节点组使用同一子网和可用区。安全组规则及出站连接由调用方管理。仅支持 POST 按量计费，不创建节点公网 IP。
+## 5. Providers（Providers）
 
-## 5. Providers
-
-| 名称 | 来源 | 版本 |
-|---|---|---|
-| volcenginecc | `volcengine/volcenginecc` | `>= 0.0.60` |
-
-root 模块不包含 Provider 配置、地域、凭据或 backend。验证必须使用官方发布版本，并排除 `dev_overrides`。
-
-## 6. Resources
-
-| 资源 | 所有权 |
+| 名称 | 来源 |
 |---|---|
-| [volcenginecc_emr_cluster](https://registry.terraform.io/providers/volcengine/volcenginecc/0.0.73/docs/resources/emr_cluster) | `volcenginecc_emr_cluster.this`：集群及初始 Master/Core 配置 |
-| [volcenginecc_emr_node_group](https://registry.terraform.io/providers/volcengine/volcenginecc/0.0.73/docs/resources/emr_node_group) | `volcenginecc_emr_node_group.task["<key>"]`：独立 TASK 组 |
+| `volcenginecc` | `volcengine/volcenginecc` |
 
-不使用 Data Source。底层节点由 EMR 创建，不应为同一批节点额外声明 ECS 资源。初始组与独立 TASK 组分别管理。VPC、Subnet、安全组、IAM、SSH 密钥对和 TOS 是外部依赖。
+模块不配置 Provider alias、地域、凭据或 backend，这些内容由调用方 root 管理。
 
-## 7. Inputs
+## 6. 资源（Resources）
 
-精确对象定义与校验位于 `variables.tf`。
+| 模式 | 类型 | 名称 |
+|---|---|---|
+| 创建 | `volcenginecc_emr_cluster` | [`volcenginecc_emr_cluster.this`](https://registry.terraform.io/providers/volcengine/volcenginecc/latest/docs/resources/emr_cluster) |
+| 创建 | `volcenginecc_emr_node_group` | [`volcenginecc_emr_node_group.task`](https://registry.terraform.io/providers/volcengine/volcenginecc/latest/docs/resources/emr_node_group) |
 
-| 名称 | 类型 | 默认值 | 必填 | 说明 |
+模块不读取 Data Source。EMR 服务负责创建底层 ECS 节点；不要为同一批节点另行声明 ECS 资源。
+
+## 7. 输入（Inputs）
+
+| 名称 | 类型 | 默认值 | 创建模式下是否必填 | 说明 |
 |---|---|---|---|---|
-| cluster_name | string | — | yes | 集群名称 |
-| release_version | string | — | yes | EMR 发行版本，决定组件版本 |
-| cluster_type | string | `"Hadoop"` | no | 地域支持的集群类型 |
-| application_names | set(string) | `["HDFS", "YARN", "SPARK3"]` | no | 安装组件名称 |
-| project_name | string | `"default"` | no | 项目 |
-| network | object | — | yes | vpc_id、subnet_id、security_group_id、zone_id |
-| ecs_iam_role | string | — | yes | 已有 ECS IAM Role 名称 |
-| ecs_key_pair_name | string | — | yes | 已有 SSH 密钥对名称 |
-| deploy_mode | string | `"SIMPLE"` | no | SIMPLE / HIGH_AVAILABLE |
-| security_mode | string | `"SIMPLE"` | no | 发行版本支持的安全模式，包括可用时的 KERBEROS |
-| history_server_mode | string | `"LOCAL"` | no | LOCAL / PHS |
-| initial_node_groups | map(object) | — | yes | 恰好一个 MASTER 和一个 CORE；name、type、instance_type、node_count、system_disk、data_disk |
-| task_node_groups | map(object) | `{}` | no | TASK 组；name、instance_type、node_count、system_disk、data_disk |
-| bootstrap_scripts | map(object) | `{}` | no | 脚本名称／路径、参数、优先级、失败／执行策略 |
-| application_configs | map(object) | `{}` | no | 组件、元数据连接、文件／键／值配置 |
-| tags | map(string) | `null` | no | 默认省略；显式空 map 表达清空标签 |
+| `cluster_name` | `string` | 无 | 是 | 集群名称，不能为空。 |
+| `release_version` | `string` | 无 | 是 | 地域可用的 EMR 发行版本，格式为 `x.y.z`；修改可能重建集群。 |
+| `cluster_type` | `string` | `"Hadoop"` | 否 | 地域和发行版本支持的集群类型。 |
+| `application_names` | `set(string)` | `["HDFS", "YARN", "SPARK3"]` | 否 | 安装组件集合，至少包含一个非空名称；组件版本由发行版本决定。 |
+| `project_name` | `string` | `"default"` | 否 | 资源所属项目，允许字母、数字、下划线、点和连字符，长度 1–64。 |
+| `network` | `object({ vpc_id = string, subnet_id = string, security_group_id = string, zone_id = string })` | 无 | 是 | 调用方管理的 VPC、同可用区 Subnet、安全组和可用区，四个字段均不能为空。 |
+| `ecs_iam_role` | `string` | 无 | 是 | 已有 ECS IAM Role 名称，由调用方授予 EMR 及所需 TOS 路径权限。 |
+| `ecs_key_pair_name` | `string` | 无 | 是 | 已有 ECS SSH 密钥对名称；模块不接收节点明文密码。 |
+| `deploy_mode` | `string` | `"SIMPLE"` | 否 | `SIMPLE` 或 `HIGH_AVAILABLE`；高可用节点数量按目标发行版本要求配置。 |
+| `security_mode` | `string` | `"SIMPLE"` | 否 | 目标发行版本支持的 EMR 安全模式。 |
+| `history_server_mode` | `string` | `"LOCAL"` | 否 | `LOCAL` 或 `PHS`；PHS 所需外部服务由调用方准备。 |
+| `initial_node_groups` | `map(object)` | 无 | 是 | 创建期 Master/Core 组；必须恰好包含一个 `MASTER` 和一个 `CORE`。每组包含 `name`、`type`、`instance_type`、`node_count`、`system_disk`、`data_disk`。 |
+| `task_node_groups` | `map(object)` | `{}` | 否 | 独立 TASK 组。稳定 map key 对应资源地址；每组包含 `name`、`instance_type`、`node_count`、`system_disk`、`data_disk`。 |
+| `bootstrap_scripts` | `map(object)` | `{}` | 否 | 可选节点初始化脚本。每项包含 `script_name`、`script_path`，可选 `script_args`、`priority`、`execution_moment`、`execution_fail_strategy`；脚本需预先上传到 `tos://bucket/key`。 |
+| `application_configs` | `map(object)` | `{}` | 否 | 集群级组件配置。每项包含 `application_name`、可选连接信息及由 `file`、`key`、`value` 组成的配置 map；组件必须包含在 `application_names` 中。 |
+| `tags` | `map(string)` | `null` | 否 | 集群标签；`null` 表示不配置，显式 `{}` 表示请求清空。 |
 
-磁盘对象指定 size 和 volume_type，数据盘还需 count。Bootstrap 路径必须引用已上传的 `tos://bucket/key` 对象。嵌套可选默认值与约束见 `variables.tf`。
+节点数量必须为 1–1000 的整数；系统盘和数据盘容量必须为 60–2048 GiB 的整数；每组数据盘数量必须为 1–15。初始组和 TASK 组名称必须全局唯一。
 
-## 8. Outputs
+## 8. 输出（Outputs）
 
-| 名称 | 说明 |
-|---|---|
-| cluster_id | 集群 ID |
-| cluster_state | Provider 回读的集群状态 |
-| applications | 安装组件及实际版本 |
-| task_node_group_ids | 稳定 TASK 逻辑 key 与节点组 ID 映射 |
-| network | 调用方传入的网络引用 |
+| 名称 | 类型 | 说明 |
+|---|---|---|
+| `cluster_id` | `string` | 创建的 EMR 集群 ID。 |
+| `cluster_state` | `string` | Provider 回读的集群状态。 |
+| `applications` | `set(object)` | Provider 回读的已安装组件信息，包括组件名称、状态、版本、目录和运行用户等字段。 |
+| `task_node_group_ids` | `map(string)` | 调用方 TASK 逻辑 key 到节点组 ID 的映射；未配置 TASK 时为空 map。 |
+| `network` | `object` | 调用方传入的 VPC、Subnet、安全组和可用区引用，供下游组合使用。 |
 
-## 9. Notes
+## 9. 其他说明（Notes）
 
-将发行版本、组件、网络、Role、部署／安全／History 模式、Bootstrap、应用设置和初始组视为创建配置，修改前查看替换计划。本地 CCAPI Schema 将主要字段标为 create-only，发布 Provider Schema JSON 不暴露 RequiresReplace。精确替换行为、名称／标签更新与 TASK 容量更新仍需有真实 State 的 plan 验证。初始 map key 不形成独立资源地址。TASK key 改名会删除并重建该组；扩缩容或删除前应完成作业并保护数据。
-
-部分创建字段为 write-only 或 Optional+Computed。空应用配置转换为省略 `application_extras`，修复已观察到的空列表替换问题；此行为不清除已有组件设置。默认 tags 省略，显式 `{}` 保留清空意图，其回读幂等性未验证。Computed-only 字段由 Provider 管理，模块不使用 `ignore_changes` 掩盖漂移。
-
-complete 配置私有 TOS Hive 仓库和 Spark 事件／History 路径，不包含全部 EMR 系统日志、TLS 采集、保留策略或全局 `log_uri`。需实测目标版本的 TOS connector、Role 权限、组件配置及 History Server 行为。PHS 本身不配置 TOS 日志。应用配置和 Bootstrap 参数会进入配置与 State，不应放入凭据。
-
-Provider 0.0.60 和 0.0.73 未暴露自动伸缩，TASK 容量手动调整。Serverless、Studio、Spot/Instance Fleet 和作业编排不在范围内。HIGH_AVAILABLE 和 Kerberos 仅提供配置入口，需确认支持的发行版本及节点数量，尚未云端验证。
-
-未测试 import。导入集群或 TASK 前应遵循目标 Provider 文档并补齐创建输入。destroy 清理模块拥有的节点组和集群；通过独立查询确认 EMR、TASK、ECS、磁盘均无残留。调用方依赖及 TOS 数据保留。
-
-```shell
-terraform fmt -check -recursive
-terraform init
-terraform validate
-```
-
-OpenTofu 1.11.8 将上述命令中的 `terraform` 替换为 `tofu`。Terraform 1.5.7 和 OpenTofu 1.11.8 均通过官方 Provider 0.0.60/0.0.73 的静态验证。basic 和 complete 使用 Terraform 1.5.7、官方 Provider 0.0.73 通过云端生命周期；complete 使用真实上传并核对哈希的 Bootstrap 脚本。静态验证不证明 Registry 可解析或 OpenTofu 云端运行通过；InfraManager、OpenTofu 云验、更新、Registry 消费及发布尚未完成。
+- 模块管理 EMR 集群及独立 TASK 组；网络、IAM Role、SSH 密钥对、TOS Bucket、对象和业务数据由调用方管理。
+- 修改发行版本、组件、网络、部署模式、安全模式、History 模式、Bootstrap、应用配置或初始节点组可能替换集群。应用前检查 Terraform plan，并在可能中断业务时先完成作业和保护数据。
+- TASK map key 形成资源地址。修改 key 会删除旧节点组并创建新节点组；调整 `node_count` 表示手动期望容量，本模块不配置自动伸缩策略。
+- Bootstrap 默认关闭。启用时，脚本必须由调用方预先上传到 TOS；脚本参数和应用配置会进入 Terraform 配置及 State，不应包含凭据。
+- complete 示例使用 TOS 保存 Hive 数据及 Spark 事件日志。部署前需准备日志目录及 Role 权限；TOS connector 使用原生重命名时还需开启 RenameObject，该功能与已开启或暂停的 Bucket 版本控制互斥。
+- `prepare-tos.py` 不创建 Bucket，只负责检查已有 Bucket、创建 Spark 事件日志目录并按需开启 RenameObject。调用方已通过控制台或其他工具完成这些操作时，不需要运行该脚本。
+- 部署完成后再次执行正常的 `terraform plan`，确认没有变化。销毁前先完成业务作业；`terraform destroy` 删除模块管理的集群和 TASK 组，保留调用方外部依赖及 TOS 数据。

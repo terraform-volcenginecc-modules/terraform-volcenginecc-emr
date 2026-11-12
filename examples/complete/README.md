@@ -1,85 +1,110 @@
-# complete
+# COMPLETE EMR Example
 
 ## 1. Overview
 
-Spark/Hive data lake and batch workers: 1 Master, 2 Core nodes, and one independent TASK group with 2 nodes by default. Private TOS stores Hive managed/external warehouses and Spark event/history logs. Bootstrap references a real caller-uploaded script.
+This example creates 1 Master, 2 Core, and 2 TASK nodes by default, installs HDFS, YARN, SPARK3, and HIVE, and configures Hive warehouses and Spark event logs in an existing private TOS bucket. Compared with basic, it adds an independent TASK group, TOS data-lake settings, tags, and optional Bootstrap. The caller also prepares TOS log prerequisites, permissions, and supported regional specifications.
 
 ## 2. Usage
 
-The intended source is `terraform-volcenginecc-modules/emr/volcenginecc`, pending publication. For draft execution, change source to `../..` in a local checkout; static validation changes only temporary copies. Fill required inputs in an ignored `terraform.tfvars`. Supply credentials through `VOLCENGINE_ACCESS_KEY` / `VOLCENGINE_SECRET_KEY` or a supported profile. Exclude `dev_overrides` and use the official Provider.
+### Prepare TOS
+
+Spark event logs are written to `tos://your-emr-bucket/logs/spark-events/`; replace `your-emr-bucket` with the actual bucket name. Before deployment, create the TOS bucket and event-log directory. When the TOS connector uses native renaming, enable RenameObject.
+
+The optional `prepare-tos.py` runs from the deployment workstation or pipeline and prepares the directory and RenameObject. It does not create a bucket or operate on EMR nodes:
 
 ```shell
-terraform init -backend=false
-terraform validate
+python3 prepare-tos.py \
+  --bucket "your-emr-bucket" \
+  --region "cn-beijing" \
+  --enable-rename
+```
+
+The script reads `VOLCENGINE_ACCESS_KEY` and `VOLCENGINE_SECRET_KEY` from the environment. Skip it if the same preparation was completed through the console. Use `--check` for read-only verification.
+
+### Enable Bootstrap When Needed
+
+Bootstrap is disabled by default. `bootstrap.sh` is an optional example that creates `/var/tmp/emr-batch` on every EMR node. It is not required to start the cluster and does not operate on TOS.
+
+For node initialization, upload the example or your own script to TOS, then set:
+
+```hcl
+bootstrap_script_path = "tos://your-emr-bucket/bootstrap/bootstrap.sh"
+```
+
+The cluster ECS IAM Role must be able to read the object. Omit `bootstrap_script_path` or set it to `null` to disable Bootstrap. `prepare-tos.py` and `bootstrap.sh` are independent and do not call each other.
+
+### Run Terraform
+
+Configure inputs and run these commands from `examples/complete`:
+
+```shell
+terraform init
 terraform plan
 terraform apply
-terraform plan -detailed-exitcode
+terraform plan
 terraform destroy
 ```
 
-For OpenTofu, substitute `tofu`, using a separate directory and State. These commands create billable resources. Complete passed the Terraform 1.5.7 cloud lifecycle with official Provider 0.0.73; OpenTofu cloud execution remains unverified.
+Use the first Plan to review the cluster, TASK group, and TOS settings. The Plan after Apply should show no changes. Finish business jobs and review the deletion scope before Destroy. Existing network, IAM, SSH key-pair, and TOS data remain.
 
-## 3. Examples
+## 3. Requirements
 
-Compared with `examples/basic`, adds HIVE, an independent TASK group, Bootstrap, TOS settings, and tags. Does not execute Spark/Hive business jobs.
-
-## 4. Requirements
-
-| Requirement | Version / condition |
+| Name | Version |
 |---|---|
-| Terraform | `1.5.7` |
-| OpenTofu | `1.11.8` |
-| Existing dependencies | Matching network, ECS IAM Role, SSH key pair, private TOS bucket, actual uploaded Bootstrap script |
-| Cloud prerequisites | Release supporting SPARK3/HIVE and TOS connector; matching specifications and quotas |
+| Terraform | `>= 1.5.7, < 2.0.0` |
+| `volcengine/volcenginecc` | `= 0.0.73` |
 
-Scripts may use a separate bucket. The caller manages object permissions, access, retention, and data cleanup.
+## 4. Providers
 
-## 5. Providers
-
-| Name | Source | Version |
-|---|---|---|
-| volcenginecc | `volcengine/volcenginecc` | `= 0.0.73` |
-
-## 6. Resources
-
-| Managed through module | Count |
+| Name | Source |
 |---|---|
-| `volcenginecc_emr_cluster` | 1, including initial Master/Core |
-| `volcenginecc_emr_node_group` | 1 independent TASK group keyed `batch` |
+| `volcenginecc` | `volcengine/volcenginecc` |
 
-Creates no external dependencies or TOS objects.
-
-## 7. Inputs
-
-| Name | Type | Default | Required | Description |
-|---|---|---|---|---|
-| region | string | — | yes | Region |
-| cluster_name | string | — | yes | Cluster name |
-| release_version | string | — | yes | Release supporting SPARK3/HIVE |
-| network | object | — | yes | vpc_id, subnet_id, security_group_id, zone_id |
-| ecs_iam_role | string | — | yes | Role authorized for data/log/script paths |
-| ecs_key_pair_name | string | — | yes | Existing SSH key pair |
-| master_instance_type | string | — | yes | Master ECS type |
-| worker_instance_type | string | — | yes | Core/TASK ECS type |
-| disk_type | string | — | yes | Supported EMR disk type |
-| tos_bucket_name | string | — | yes | Existing private bucket name without tos:// |
-| bootstrap_script_path | string | — | yes | Actual uploaded tos://bucket/key script |
-| task_node_count | number | `2` | no | Manual desired TASK capacity |
-| tags | map(string) | `{ scenario = "spark-hive-data-lake" }` | no | Cluster tags |
-
-## 8. Outputs
+## 5. Resources
 
 | Name | Description |
 |---|---|
-| cluster_id | Cluster ID |
-| task_node_group_ids | TASK key to group ID |
-| applications | Installed components and actual versions |
-| data_lake_paths | Caller-owned managed/external warehouse and Spark event log paths |
+| `module.emr` | Uses `terraform-volcenginecc-modules/emr/volcenginecc` to create the EMR cluster, initial Master/Core groups, and independent TASK group, and to configure Hive warehouses, Spark event logs, tags, and optional Bootstrap. |
+
+This example declares no Resource or Data Source directly.
+
+## 6. Inputs
+
+| Name | Description |
+|---|---|
+| `region` | Deployment region, also used to configure the `volcenginecc` Provider. |
+| `cluster_name` | EMR cluster name. |
+| `release_version` | EMR release supporting SPARK3, HIVE, and the TOS connector. |
+| `network` | Existing `vpc_id`, `subnet_id`, `security_group_id`, and `zone_id`; the Subnet and zone must match. |
+| `ecs_iam_role` | ECS IAM Role allowing EMR to access TOS data, logs, and the optional Bootstrap script. |
+| `ecs_key_pair_name` | Existing ECS SSH key-pair name. |
+| `master_instance_type` | Master-node ECS specification. |
+| `worker_instance_type` | ECS specification shared by Core and TASK nodes. |
+| `disk_type` | EMR disk type supported in the target zone. |
+| `tos_bucket_name` | Existing private TOS bucket name without `tos://`. |
+| `bootstrap_script_path` | Optional initialization-script address. Provide `tos://bucket/key` to enable Bootstrap; omit it or set it to `null` to disable Bootstrap. |
+| `task_node_count` | Manual desired TASK capacity, default `2`; not an autoscaling policy. |
+| `tags` | Cluster tags, default `{ scenario = "spark-hive-data-lake" }`. |
+
+## 7. Outputs
+
+| Name | Description |
+|---|---|
+| `cluster_id` | ID of the created EMR cluster. |
+| `task_node_group_ids` | TASK logical key to node-group ID mapping. |
+| `applications` | Installed application and actual version information returned by the Provider. |
+| `data_lake_paths` | Caller-managed Hive managed-warehouse, external-warehouse, and Spark event-log paths. |
+
+## 8. Example
+
+This directory contains the complete example for a cluster with Hive, independent batch workers, and a TOS data lake. Use basic when only a minimal Spark/Hadoop cluster is required.
 
 ## 9. Notes
 
-On 2026-11-04, complete passed Plan/Apply/second plan No changes/standard Destroy on Terraform 1.5.7 and official Provider 0.0.73. All 5 nodes and 16 disks were independently confirmed absent. Bootstrap on all 5 nodes, Spark/Hive TOS queries (10 rows, sum 45), TOS event logs, and History Server reads passed. TASK updates/removal remain unverified. Spark event logs are not all EMR system logs; no TLS collection is configured.
-
-Provider 0.0.60 and 0.0.73 expose no EMR autoscaling policy. Change `task_node_count` manually, then verify a second plan with No changes. Do not let another system concurrently manage capacity. Removing `batch` should remove only that TASK group; real State validation is needed. Inspect replacement plans before changing initial groups, release, or Bootstrap.
-
-Do not put credentials in scripts, arguments, or application values. Destroy removes module-owned cluster/TASK groups. Independently confirm EMR, ECS, and disk absence. Preserve caller dependencies and TOS data.
+- Supply Provider credentials through environment variables, shared configuration, or the runtime platform's credential manager. Do not store them in source or variable files.
+- Run `terraform plan` again after Apply. Idempotence requires the final Plan to show no changes.
+- `task_node_count` sets manual desired capacity; this example does not configure an autoscaling policy.
+- The TOS event-log directory is a Spark History prerequisite independent of Bootstrap.
+- Bootstrap cannot rely on Hadoop when it runs before application installation. Do not include credentials in script arguments or application settings.
+- Review the Plan before changing initial node groups, the release, Bootstrap, or application settings to identify cluster replacement.
+- `terraform destroy` removes the module-managed EMR cluster and TASK group while preserving caller-owned network, IAM, SSH key pair, and TOS data.

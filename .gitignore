@@ -18,10 +18,3 @@ override.tf.json
 .dbg/
 .aiac/
 __pycache__/
-
-# Local validation and acceptance artifacts
-/draft_*/
-/docs/
-/scripts/
-/tests/
-/.github/

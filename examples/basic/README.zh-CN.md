@@ -1,73 +1,72 @@
-# basic
+# BASIC EMR 示例
 
-## 1. Overview
+## 1. 概述
 
-Spark/Hadoop 离线 ETL：1 个 Master、2 个 Core，HDFS/YARN/SPARK3，按量计费，私网节点。使用已有网络、IAM Role 和 SSH 密钥对。
+本示例创建 1 个 Master 和 2 个 Core 节点组成的私网 Spark/Hadoop 集群，安装 HDFS、YARN 和 SPARK3。调用方需准备同一 VPC 和可用区内的 Subnet、安全组、ECS IAM Role、SSH 密钥对，以及可用的 EMR 发行版本、ECS 规格和磁盘类型。与 complete 相比，本示例不创建 TASK 节点组，也不配置 Hive 和 TOS 数据湖。
 
-## 2. Usage
+## 2. 用法
 
-计划 source 为 `terraform-volcenginecc-modules/emr/volcenginecc`，尚未发布。运行草稿时，在本地检出源码中将模块 source 改为 `../..`；静态脚本仅在临时副本中修改。在被忽略的 `terraform.tfvars` 中填写所有必填输入。通过 `VOLCENGINE_ACCESS_KEY` / `VOLCENGINE_SECRET_KEY` 或支持的 profile 提供 Provider 凭据。排除 `dev_overrides`，确保使用官方 Provider。
+在 `examples/basic` 目录填写输入并执行：
 
 ```shell
-terraform init -backend=false
-terraform validate
+terraform init
 terraform plan
 terraform apply
-terraform plan -detailed-exitcode
+terraform plan
 terraform destroy
 ```
 
-OpenTofu 将命令中的 `terraform` 替换为 `tofu`，使用独立目录和 State。这些命令创建计费资源；OpenTofu 云端运行尚未验证。
+首次 Plan 用于确认创建范围；Apply 后再次 Plan，预期没有变化。Destroy 前确认当前 State 只包含本示例管理的 EMR 集群，调用方已有网络、IAM Role 和 SSH 密钥对不会被删除。
 
-## 3. Examples
+## 3. 依赖要求
 
-本目录为基础场景。`examples/complete` 增加 TASK Worker、Bootstrap、Hive 仓库和 Spark 事件日志。
-
-## 4. Requirements
-
-| 依赖 | 版本／条件 |
+| 名称 | 版本 |
 |---|---|
-| Terraform | `1.5.7` |
-| OpenTofu | `1.11.8` |
-| 已有依赖 | 同 VPC 网络、匹配的 Subnet／可用区／安全组、ECS IAM Role、SSH 密钥对 |
-| 云端条件 | 已开通 EMR；支持的发行版本、组件、ECS／磁盘规格；足够配额 |
+| Terraform | `>= 1.5.7, < 2.0.0` |
+| `volcengine/volcenginecc` | `= 0.0.73` |
 
-## 5. Providers
+## 4. Providers
 
-| 名称 | 来源 | 版本 |
-|---|---|---|
-| volcenginecc | `volcengine/volcenginecc` | `= 0.0.73` |
-
-## 6. Resources
-
-| 经模块管理 | 数量 |
+| 名称 | 来源 |
 |---|---|
-| `volcenginecc_emr_cluster` | 1，包含初始 Master/Core 组 |
+| `volcenginecc` | `volcengine/volcenginecc` |
 
-示例不创建独立 TASK 组或外部依赖。
-
-## 7. Inputs
-
-| 名称 | 类型 | 默认值 | 必填 | 说明 |
-|---|---|---|---|---|
-| region | string | — | yes | 部署地域 |
-| cluster_name | string | — | yes | 集群名称 |
-| release_version | string | — | yes | 地域支持的 EMR 发行版本 |
-| network | object | — | yes | vpc_id、subnet_id、security_group_id、zone_id |
-| ecs_iam_role | string | — | yes | 已授权的 ECS Role |
-| ecs_key_pair_name | string | — | yes | 已有 SSH 密钥对 |
-| instance_type | string | — | yes | EMR 支持的 ECS 规格 |
-| disk_type | string | — | yes | 支持的 EMR 磁盘类型 |
-
-## 8. Outputs
+## 5. 资源
 
 | 名称 | 说明 |
 |---|---|
-| cluster_id | EMR 集群 ID |
-| applications | 安装组件及实际版本 |
+| `module.emr` | 通过 `terraform-volcenginecc-modules/emr/volcenginecc` 创建 EMR 集群及初始 Master/Core 节点组。 |
 
-## 9. Notes
+本示例不直接声明 Resource 或 Data Source。
 
-2026-11-04，Terraform 1.5.7 和官方 Provider 0.0.73 通过创建及核心服务启动。修复空 `application_extras` 回读差异后，二次 plan 返回 No changes（退出 0）。标准 destroy 成功，已独立回查确认 3 个 ECS 节点和 12 块磁盘全部释放。业务作业及其他部署／安全模式未验证。
+## 6. 输入
 
-安全组规则和出站连接由调用方管理。不要在仓库保存凭据。二次 plan 必须返回 0；destroy 后独立查询 EMR、ECS 和磁盘确认无残留。调用方依赖保留。
+| 名称 | 说明 |
+|---|---|
+| `region` | 部署地域，同时用于配置 `volcenginecc` Provider。 |
+| `cluster_name` | EMR 集群名称。 |
+| `release_version` | 目标地域可用且支持 HDFS、YARN、SPARK3 的 EMR 发行版本。 |
+| `network` | 已有 `vpc_id`、`subnet_id`、`security_group_id` 和 `zone_id`；Subnet 与可用区需要匹配。 |
+| `ecs_iam_role` | 已配置 EMR 所需权限的 ECS IAM Role 名称。 |
+| `ecs_key_pair_name` | 已有 ECS SSH 密钥对名称。 |
+| `instance_type` | Master/Core 节点共用的、目标可用区内 EMR 支持的 ECS 规格。 |
+| `disk_type` | 目标可用区支持的 EMR 磁盘类型。 |
+
+## 7. 输出
+
+| 名称 | 说明 |
+|---|---|
+| `cluster_id` | 创建的 EMR 集群 ID。 |
+| `applications` | Provider 回读的已安装组件和实际版本信息。 |
+
+## 8. 示例
+
+本目录即为 basic 示例，适合先部署最小 Spark/Hadoop 集群。需要 HIVE、独立 TASK 节点组、TOS Hive 仓库或 Spark 事件日志时，使用 complete 示例。
+
+## 9. 说明
+
+- Provider 凭据通过环境变量、共享配置或运行平台的凭据管理能力传入，不写入源码或参数文件。
+- Apply 后再次执行 `terraform plan`；只有结果无变化时才满足幂等要求。
+- 安全组规则和出站连接由调用方管理。
+- 修改发行版本、网络或初始节点组前先查看 Plan，确认是否替换集群。
+- `terraform destroy` 删除模块管理的 EMR 集群，保留调用方已有的网络、IAM Role 和 SSH 密钥对。

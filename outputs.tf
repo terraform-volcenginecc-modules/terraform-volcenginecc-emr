@@ -4,7 +4,7 @@ output "cluster_id" {
 }
 
 output "cluster_state" {
-  description = "Provider 回读的集群状态，不代表工作负载验收通过。"
+  description = "Provider 回读的集群状态。"
   value       = volcenginecc_emr_cluster.this.cluster_state
 }
 
